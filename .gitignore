@@ -1,3 +1,7 @@
 nFactorial projects/project6/tengri_data.parquet
 nFactorial projects/project6/tengri_full.csv
 nFactorial projects/project6/tengrinews.ipynb
+nFactorial projects/project6/pytorch_tag_model.pth
+nFactorial projects/project6/pytorch_tag_model.pkl
+nFactorial projects/project6/tengri_data_cleaned.parquet
+nFactorial projects/project6/tengri_data.jsonl
