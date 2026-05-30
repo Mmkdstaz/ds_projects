@@ -3,6 +3,8 @@ import sys
 from dotenv import load_dotenv
 if sys.platform == "win32":
     os.environ["TESSDATA_PREFIX"] = r"C:\Users\monitoring\AppData\Local\Programs\Tesseract-OCR\tessdata"
+
+os.environ["OMP_THREAD_LIMIT"] = "1"
 load_dotenv()
 
 from pathlib import Path
@@ -28,7 +30,8 @@ pipeline_options.generate_page_images = False
 
 converter = DocumentConverter(
     format_options={
-        InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+        InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options,
+                                         num_threads = 2)
     }
 )
 
