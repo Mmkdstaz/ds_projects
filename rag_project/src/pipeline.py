@@ -1,8 +1,12 @@
+import re
+import logging
 from pathlib import Path
-from docling.chunking import HybridChunker
 
 from src.cleaner import clean_text
+from src.config import CHUNK_SIZE, CHUNK_OVERLAP
 from src.loader import load_document
+
+logger = logging.getLogger(__name__)
 
 NOISE_PATTERNS = [
     r"copyright",
@@ -14,67 +18,80 @@ NOISE_PATTERNS = [
     r"редакция \d{1,2} \w+ \d{4}",
 ]
 
-import re
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
+
 
 def is_noise_chunk(text: str) -> bool:
     text_lower = text.lower()
     for pattern in NOISE_PATTERNS:
         if re.search(pattern, text_lower):
             return True
-    if len(text.strip()) < 30:
+    if len(text.strip()) < 50:
         return True
     words = text.split()
-    if words:
-        avg_word_len = sum(len(w) for w in words) / len(words)
-        if avg_word_len > 15:  
-            return True
+    if words and sum(len(w) for w in words) / len(words) > 15:
+        return True
     return False
 
 
-def process_document(file_path: str):
-    doc = load_document(file_path)
+def process_document(file_path: str) -> list[dict]:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-    chunker = HybridChunker(chunk_size=500, chunk_overlap=50)
-    doc_chunks = list(chunker.chunk(doc))
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Файл не найден: {file_path}")
+    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        raise ValueError(f"Неподдерживаемый формат: {path.suffix}")
+
+    pages = load_document(file_path)
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""],
+    )
 
     documents = []
+    chunk_counter = 0
 
-    for idx, chunk in enumerate(doc_chunks):
-        raw_text = getattr(chunk, "text", "")
-        cleaned_text = clean_text(raw_text)
+    for page_data in pages:
+        chunks = splitter.split_text(page_data["text"])
+        for chunk in chunks:
+            cleaned = clean_text(chunk)
+            if not cleaned or is_noise_chunk(cleaned):
+                continue
+            documents.append({
+                "text": cleaned,
+                "metadata": {
+                    "source": path.name,
+                    "page": page_data["page"],
+                    "chunk_id": chunk_counter,
+                },
+            })
+            chunk_counter += 1
 
-        if not cleaned_text:
-            continue
-
-        if is_noise_chunk(cleaned_text):
-            continue
-
-        page_numbers = []
-        meta = getattr(chunk, "meta", None)
-
-        if meta and getattr(meta, "doc_items", None):
-            for item in meta.doc_items:
-                prov = getattr(item, "prov", None)
-                if prov:
-                    for p in prov:
-                        page_no = getattr(p, "page_no", None)
-                        if page_no is not None:
-                            page_numbers.append(page_no)
-
-        page = sorted(set(page_numbers))[0] if page_numbers else 1
-        section = "Введение"
-
-        if meta and getattr(meta, "headings", None):
-            section = meta.headings[-1]
-
-        documents.append({
-            "text": cleaned_text,
-            "metadata": {
-                "source": Path(file_path).name,
-                "page": page,
-                "section": section,
-                "chunk_id": idx,
-            },
-        })
-
+    logger.info("%s — %d чанков", path.name, len(documents))
     return documents
+
+
+def process_folder(folder: str) -> list[dict]:
+    folder_path = Path(folder)
+    all_docs = []
+
+    files = [
+        f for f in folder_path.iterdir()
+        if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+    ]
+
+    logger.info("Файлов: %d", len(files))
+
+    for file in files:
+        try:
+            docs = process_document(str(file))
+            all_docs.extend(docs)
+            logger.info("✓ %s — %d чанков", file.name, len(docs))
+        except Exception as e:
+            logger.error("✗ %s — %s", file.name, e)
+
+    logger.info("Итого: %d чанков", len(all_docs))
+    return all_docs
